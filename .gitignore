@@ -25,6 +25,7 @@
 .DS_Store
 *.pem
 .github
+._*
 
 # debug
 npm-debug.log*
