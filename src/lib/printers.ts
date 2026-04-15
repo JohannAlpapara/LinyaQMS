@@ -7,8 +7,15 @@ export interface PrinterStatus {
   connected: boolean
   platform: NodeJS.Platform
   printers: string[]
+  readyPrinters: string[]
   defaultPrinter: string | null
   details: string
+}
+
+interface DetectedPrinter {
+  name: string
+  isOnline: boolean
+  statusText: string
 }
 
 function shellQuote(value: string): string {
@@ -30,22 +37,95 @@ async function hasCommand(command: string): Promise<boolean> {
   return check.ok && Boolean(check.stdout.trim())
 }
 
-function parsePosixPrinters(output: string): string[] {
-  return output
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith('printer '))
-    .map((line) => line.replace(/^printer\s+/, '').split(' ')[0])
-    .filter(Boolean)
+const POSIX_UNAVAILABLE_PATTERN = /(offline|disabled|not connected|unable to connect|unreachable|timed out|stopped|paused|media-empty|out of paper|cover open|door open|jam)/i
+
+function normalizeStatusText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
 }
 
-function parseMacPrinters(output: string): string[] {
+export function parsePosixPrinterStates(output: string): DetectedPrinter[] {
   return output
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith('Display Name:'))
-    .map((line) => line.replace('Display Name:', '').trim())
-    .filter(Boolean)
+    .split(/\n(?=printer\s+)/)
+    .map((block) => block.trim())
+    .filter((block) => block.startsWith('printer '))
+    .map((block) => {
+      const statusText = normalizeStatusText(block)
+      const nameMatch =
+        statusText.match(/^printer\s+(.+?)(?=\s+(?:is|now)\s+)/i) ??
+        statusText.match(/^printer\s+([^\s]+)/i)
+      const name = nameMatch?.[1]?.trim()
+
+      if (!name) {
+        return null
+      }
+
+      return {
+        name,
+        isOnline: !POSIX_UNAVAILABLE_PATTERN.test(statusText),
+        statusText,
+      }
+    })
+    .filter((printer): printer is DetectedPrinter => Boolean(printer))
+}
+
+function parseMacPrinterStates(output: string): DetectedPrinter[] {
+  const printers: DetectedPrinter[] = []
+  let currentName: string | null = null
+  let currentStatus = ''
+
+  const flushCurrent = () => {
+    if (!currentName) {
+      return
+    }
+
+    const statusText = normalizeStatusText(currentStatus || 'Status unknown')
+    printers.push({
+      name: currentName,
+      isOnline: !POSIX_UNAVAILABLE_PATTERN.test(statusText),
+      statusText,
+    })
+  }
+
+  for (const line of output.split('\n')) {
+    const nameMatch = line.match(/^\s{4}(.+):\s*$/)
+    if (nameMatch && nameMatch[1] !== 'Printers') {
+      flushCurrent()
+      currentName = nameMatch[1].trim()
+      currentStatus = ''
+      continue
+    }
+
+    const statusMatch = line.match(/^\s{6}Status:\s*(.+)$/)
+    if (statusMatch) {
+      currentStatus = statusMatch[1].trim()
+    }
+  }
+
+  flushCurrent()
+  return printers
+}
+
+function buildPrinterDetails(printers: DetectedPrinter[], source: string): string {
+  if (printers.length === 0) {
+    return `No printers detected via ${source}`
+  }
+
+  const readyPrinters = printers.filter((printer) => printer.isOnline)
+  const unavailablePrinters = printers.filter((printer) => !printer.isOnline)
+
+  if (unavailablePrinters.length === 0) {
+    return `Found ${printers.length} ready printer(s)`
+  }
+
+  const unavailableSummary = unavailablePrinters
+    .map((printer) => `${printer.name}: ${printer.statusText}`)
+    .join('; ')
+
+  if (readyPrinters.length === 0) {
+    return `Found ${printers.length} printer(s), but all are unavailable (${unavailableSummary})`
+  }
+
+  return `Found ${printers.length} printer(s); ${readyPrinters.length} ready, ${unavailablePrinters.length} unavailable (${unavailableSummary})`
 }
 
 function parseWindowsPrinters(output: string): string[] {
@@ -69,28 +149,31 @@ async function getWindowsPrinters(): Promise<{ printers: string[]; defaultPrinte
   return { printers, defaultPrinter, details }
 }
 
-async function getPosixPrinters(): Promise<{ printers: string[]; defaultPrinter: string | null; details: string }> {
-  const list = await run('lpstat -p')
-  let printers = list.ok ? parsePosixPrinters(list.stdout) : []
+async function getPosixPrinters(): Promise<{ printers: string[]; readyPrinters: string[]; defaultPrinter: string | null; details: string }> {
+  const list = await run('lpstat -p -l')
+  let printerStates = list.ok ? parsePosixPrinterStates(list.stdout) : []
 
   const def = await run('lpstat -d')
   const match = def.ok ? def.stdout.match(/destination:\s*(.+)$/i) : null
   let defaultPrinter = match?.[1]?.trim() || null
   let details = list.ok
-    ? `Found ${printers.length} printer(s)`
+    ? buildPrinterDetails(printerStates, 'lpstat')
     : 'Unable to query printers via lpstat'
 
   // macOS fallback when CUPS CLI tools are unavailable
-  if (process.platform === 'darwin' && printers.length === 0) {
+  if (process.platform === 'darwin' && printerStates.length === 0) {
     const profiler = await run('system_profiler SPPrintersDataType')
     if (profiler.ok) {
-      printers = parseMacPrinters(profiler.stdout)
-      defaultPrinter = defaultPrinter || printers[0] || null
-      details = `Found ${printers.length} printer(s) via system_profiler`
+      printerStates = parseMacPrinterStates(profiler.stdout)
+      details = buildPrinterDetails(printerStates, 'system_profiler')
     }
   }
 
-  return { printers, defaultPrinter, details }
+  const printers = printerStates.map((printer) => printer.name)
+  const readyPrinters = printerStates.filter((printer) => printer.isOnline).map((printer) => printer.name)
+  defaultPrinter = defaultPrinter || readyPrinters[0] || printers[0] || null
+
+  return { printers, readyPrinters, defaultPrinter, details }
 }
 
 export async function getPrinterStatus(): Promise<PrinterStatus> {
@@ -102,18 +185,20 @@ export async function getPrinterStatus(): Promise<PrinterStatus> {
       connected: printers.length > 0,
       platform,
       printers,
+      readyPrinters: printers,
       defaultPrinter,
       details,
     }
   }
 
   if (platform === 'darwin' || platform === 'linux') {
-    const { printers, defaultPrinter, details } = await getPosixPrinters()
+    const { printers, readyPrinters, defaultPrinter, details } = await getPosixPrinters()
     const canPrint = (await hasCommand('lp')) || (await hasCommand('lpr'))
     return {
-      connected: printers.length > 0 && canPrint,
+      connected: readyPrinters.length > 0 && canPrint,
       platform,
       printers,
+      readyPrinters,
       defaultPrinter,
       details: canPrint ? details : `${details}; print command unavailable (lp/lpr)`,
     }
@@ -123,6 +208,7 @@ export async function getPrinterStatus(): Promise<PrinterStatus> {
     connected: false,
     platform,
     printers: [],
+    readyPrinters: [],
     defaultPrinter: null,
     details: `Unsupported platform: ${platform}`,
   }
@@ -135,7 +221,7 @@ export async function printTicketText(content: string): Promise<{ success: boole
 
   const status = await getPrinterStatus()
   if (!status.connected) {
-    return { success: false, details: 'No printer detected on host machine' }
+    return { success: false, details: status.details || 'No printer is ready on the host machine' }
   }
 
   const filePath = path.join(os.tmpdir(), `linya-ticket-${Date.now()}.txt`)
@@ -151,7 +237,7 @@ export async function printTicketText(content: string): Promise<{ success: boole
     }
 
     if (process.platform === 'darwin' || process.platform === 'linux') {
-      const printer = status.defaultPrinter || status.printers[0]
+      const printer = status.readyPrinters[0] || status.defaultPrinter || status.printers[0]
 
       const lpAvailable = await hasCommand('lp')
       const lprAvailable = await hasCommand('lpr')

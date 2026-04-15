@@ -15,6 +15,22 @@ interface ReservationSettings {
 }
 
 const DEFAULT_COLORS = ['#22c55e', '#3b82f6', '#ec4899', '#f59e0b', '#84cc16', '#a855f7', '#06b6d4', '#f97316']
+const REQUEST_TIMEOUT_MS = 8000
+
+async function fetchWithTimeout(input: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    return await fetch(input, {
+      cache: 'no-store',
+      ...init,
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
 
 function formatDate(date: Date) {
   return date.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })
@@ -50,6 +66,7 @@ interface QueueTicket {
 export default function ReservationPage() {
   const [lanes, setLanes] = useState<LaneStatus[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [gettingNumberFor, setGettingNumberFor] = useState<string | null>(null)
   const [isPrinterConnected, setIsPrinterConnected] = useState(false)
   const [printerStatusText, setPrinterStatusText] = useState('Checking printer...')
@@ -75,7 +92,7 @@ export default function ReservationPage() {
 
   // Fetch reservation settings
   useEffect(() => {
-    fetch('/api/display-settings')
+    fetchWithTimeout('/api/display-settings')
       .then((r) => r.json())
       .then((data) => {
         setSettings({
@@ -126,22 +143,34 @@ export default function ReservationPage() {
 
   const fetchLaneStatus = async () => {
     try {
-      const response = await fetch('/api/queue/reservation')
-      if (response.ok) {
-        const data = await response.json()
-        setLanes(data)
-        setIsLoading(false)
-      } else {
-        setIsLoading(false)
+      const response = await fetchWithTimeout('/api/queue/reservation', {
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache',
+        },
+      })
+
+      if (!response.ok) {
+        setLoadError('Unable to load services right now.')
+        setLanes([])
+        return
       }
-    } catch {
+
+      const data = await response.json()
+      setLanes(data)
+      setLoadError('')
+    } catch (error) {
+      console.error('Error fetching reservation lane status:', error)
+      setLoadError('Cannot reach the queue server from this device.')
+      setLanes([])
+    } finally {
       setIsLoading(false)
     }
   }
 
   const fetchPrinterStatus = async () => {
     try {
-      const response = await fetch('/api/print/status', { cache: 'no-cache' })
+      const response = await fetchWithTimeout('/api/print/status', { cache: 'no-cache' })
       if (!response.ok) {
         setIsPrinterConnected(false)
         setPrinterStatusText('Printer status unavailable')
@@ -151,13 +180,19 @@ export default function ReservationPage() {
       const data = await response.json()
       const connected = Boolean(data.connected)
       const printers: string[] = Array.isArray(data.printers) ? data.printers : []
+      const readyPrinters: string[] = Array.isArray(data.readyPrinters) ? data.readyPrinters : []
       const defaultPrinter = typeof data.defaultPrinter === 'string' ? data.defaultPrinter : null
+      const details = typeof data.details === 'string' ? data.details : ''
+      const preferredPrinter = readyPrinters.includes(defaultPrinter ?? '')
+        ? defaultPrinter
+        : readyPrinters[0] || defaultPrinter || printers[0] || null
+
       setIsPrinterConnected(connected)
-      setPrinterName(defaultPrinter || printers[0] || null)
+      setPrinterName(connected ? preferredPrinter : null)
       if (connected) {
-        setPrinterStatusText(defaultPrinter ? 'Printer connected (default)' : `Printer connected (${printers.length})`)
+        setPrinterStatusText(preferredPrinter ? `Printer ready: ${preferredPrinter}` : `Printer ready (${readyPrinters.length || printers.length})`)
       } else {
-        setPrinterStatusText('No printer connected')
+        setPrinterStatusText(details || 'Printer offline or unavailable')
       }
     } catch {
       setIsPrinterConnected(false)
@@ -311,8 +346,12 @@ export default function ReservationPage() {
         {lanes.length === 0 ? (
           <div className="text-center py-16">
             <div className="text-6xl mb-4 opacity-20">🏢</div>
-            <h3 className="text-gray-600 text-lg font-medium">No Services Available</h3>
-            <p className="text-gray-500 text-sm mt-1">All service lanes are currently closed.</p>
+            <h3 className="text-gray-600 text-lg font-medium">
+              {loadError ? 'Connection issue' : 'No Services Available'}
+            </h3>
+            <p className="text-gray-500 text-sm mt-1">
+              {loadError || 'All service lanes are currently closed.'}
+            </p>
           </div>
         ) : (
           lanes.map((lane) => {

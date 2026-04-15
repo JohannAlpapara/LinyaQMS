@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
     "build:production": "node build-production.js",
-    "start": "next start",
+    "start": "next start --hostname 0.0.0.0",
     "start:silent": "pm2 start ecosystem.config.js",
     "stop": "pm2 stop linyaqms",
     "restart": "pm2 restart linyaqms",

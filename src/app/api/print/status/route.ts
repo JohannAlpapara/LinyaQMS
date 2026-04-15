@@ -12,6 +12,7 @@ export async function GET() {
         connected: false,
         platform: process.platform,
         printers: [],
+        readyPrinters: [],
         defaultPrinter: null,
         details,
       },

@@ -44,6 +44,23 @@ const DEFAULT_SETTINGS: DisplaySettings = {
   display_text_color: '#ffffff',
 }
 
+const REQUEST_TIMEOUT_MS = 8000
+
+async function fetchWithTimeout(input: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    return await fetch(input, {
+      cache: 'no-store',
+      ...init,
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
 interface ExtendedAudioElement extends HTMLAudioElement {
   playNotification?: () => void
 }
@@ -55,6 +72,7 @@ interface ExtendedWindow extends Window {
 export default function DisplayPage() {
   const [lanes, setLanes] = useState<LaneStatus[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [settings, setSettings] = useState<DisplaySettings>(DEFAULT_SETTINGS)
   const [recentlyUpdatedLanes, setRecentlyUpdatedLanes] = useState<Set<string>>(new Set())
   const [isConnected, setIsConnected] = useState(false)
@@ -70,7 +88,7 @@ export default function DisplayPage() {
   // Fetch display settings
   const fetchSettings = useCallback(async () => {
     try {
-      const response = await fetch('/api/display-settings', { cache: 'no-cache' })
+      const response = await fetchWithTimeout('/api/display-settings', { cache: 'no-cache' })
       if (response.ok) {
         const data = await response.json()
         setSettings(data)
@@ -122,17 +140,28 @@ export default function DisplayPage() {
 
   const fetchLaneStatus = useCallback(async () => {
     try {
-      const response = await fetch('/api/queue/reservation', {
+      const response = await fetchWithTimeout('/api/queue/reservation', {
         cache: 'no-cache',
-        headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' },
+        headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', Pragma: 'no-cache' },
       })
-      if (response.ok) {
-        const data = await response.json()
-        setLanes(sortLanes(data))
-        setIsLoading(false)
+
+      if (!response.ok) {
+        setLoadError('Unable to load queue data right now.')
+        setIsConnected(false)
+        setLanes([])
+        return
       }
+
+      const data = await response.json()
+      setLanes(sortLanes(data))
+      setLoadError('')
     } catch (error) {
       console.error('Error fetching lane status:', error)
+      setLoadError('Cannot reach the queue server from this device.')
+      setIsConnected(false)
+      setLanes([])
+    } finally {
+      setIsLoading(false)
     }
   }, [sortLanes])
 
@@ -158,6 +187,7 @@ export default function DisplayPage() {
         eventSourceRef.current.onopen = () => {
           setIsConnected(true)
           setConnectionRetries(0)
+          setLoadError('')
           setIsLoading(false)
         }
 
@@ -451,7 +481,7 @@ export default function DisplayPage() {
               className="flex-1 flex items-center justify-center"
               style={{ color: textColor, opacity: 0.5, fontSize: '1.25rem' }}
             >
-              No active counters
+              {loadError || 'No active counters'}
             </div>
           ) : (
             <div className="flex-1 flex flex-col overflow-hidden">

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -66,17 +67,6 @@ export default function HomePage() {
     }
   }
 
-  const handleQuickAccess = (role: string) => {
-    switch (role) {
-      case 'DISPLAY':
-        router.push('/display')
-        break
-      case 'RESERVATION':
-        router.push('/reservation')
-        break
-    }
-  }
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <div className="w-full max-w-4xl space-y-8">
@@ -94,29 +84,35 @@ export default function HomePage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <Button
-                type="button"
-                onClick={() => handleQuickAccess('RESERVATION')}
+                asChild
                 className="w-full h-16 sm:h-20 text-base sm:text-lg flex flex-col items-center justify-center gap-1 touch-manipulation"
                 variant="outline"
               >
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl">📱</span>
-                  <span className="font-semibold">Customer Reservation</span>
-                </div>
-                <span className="text-xs sm:text-sm text-gray-500">Get your queue number</span>
+                <Link href="/reservation" className="w-full h-full">
+                  <div className="flex h-full flex-col items-center justify-center gap-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl">📱</span>
+                      <span className="font-semibold">Customer Reservation</span>
+                    </div>
+                    <span className="text-xs sm:text-sm text-gray-500">Get your queue number</span>
+                  </div>
+                </Link>
               </Button>
 
               <Button
-                type="button"
-                onClick={() => handleQuickAccess('DISPLAY')}
+                asChild
                 className="w-full h-16 sm:h-20 text-base sm:text-lg flex flex-col items-center justify-center gap-1 touch-manipulation"
                 variant="outline"
               >
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl">📺</span>
-                  <span className="font-semibold">Queue Display</span>
-                </div>
-                <span className="text-xs sm:text-sm text-gray-500">View current queue status</span>
+                <Link href="/display" className="w-full h-full">
+                  <div className="flex h-full flex-col items-center justify-center gap-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl">📺</span>
+                      <span className="font-semibold">Queue Display</span>
+                    </div>
+                    <span className="text-xs sm:text-sm text-gray-500">View current queue status</span>
+                  </div>
+                </Link>
               </Button>
             </CardContent>
           </Card>
