@@ -4,7 +4,7 @@ A comprehensive, production-ready queueing system for multi-lane service environ
 
 ---
 
-## 🚀 Features
+## Features
 
 ### User Roles
 - **Admin**: Full dashboard access, manage users and lanes
@@ -31,7 +31,7 @@ A comprehensive, production-ready queueing system for multi-lane service environ
 
 ---
 
-## 🛠️ Getting Started
+## Getting Started
 
 ### Prerequisites
 - Node.js 18+
@@ -114,18 +114,18 @@ npm run build:production
 
 ---
 
-## 🧑‍💻 Demo Users (Default Seed)
+## Demo Users (Default Seed)
 - **Admin**: admin / admin123
 - **Cashier 1**: c1 / 123
 - **Cashier 2**: c2 / 123
 
-## 🏢 Demo Lanes (Default Seed)
+## Demo Lanes (Default Seed)
 - **Regular Lane**: General queue for all customers
 - **PWD Lane**: Priority for PWDs and Senior Citizens
 
 ---
 
-## 🗂️ Project Structure
+## Project Structure
 ```
 src/
   app/
@@ -144,7 +144,7 @@ scripts/           # Seed and utility scripts
 
 ---
 
-## 🔗 Key API Endpoints
+## Key API Endpoints
 - `POST /api/auth/login` — Login
 - `POST /api/auth/logout` — Logout
 - `GET /api/lanes` — List all lanes (today's stats)
@@ -155,7 +155,7 @@ scripts/           # Seed and utility scripts
 
 ---
 
-## 📝 Development Scripts
+## Development Scripts
 - `npm run dev` — Start dev server
 - `npm run build` — Build for production
 - `npm run build:production` — Create deployable package
@@ -165,7 +165,7 @@ scripts/           # Seed and utility scripts
 
 ---
 
-## 🏗️ Database Entities
+## Database Entities
 - **User**: System users (admin, cashier, etc.)
 - **Lane**: Service lanes (regular, PWD, etc.)
 - **LaneUser**: Assignment of users to lanes
@@ -173,7 +173,7 @@ scripts/           # Seed and utility scripts
 
 ---
 
-## 📦 Production Deployment
+## Production Deployment
 1. Run `npm run build:production` (see `production/` folder)
 2. Copy `production/` to your server
 3. On the server, install dependencies and set production environment variables:
@@ -186,7 +186,7 @@ scripts/           # Seed and utility scripts
 
 ---
 
-## 📄 License
+## License
 MIT
 
 ---
