@@ -37,6 +37,7 @@ interface User {
   username: string
   name: string
   role: UserRole
+  window?: string
   isActive: boolean
   createdAt: string
   assignedLanes?: {
@@ -51,6 +52,8 @@ interface Lane {
   id: number
   name: string
   description?: string
+  serviceGroup?: string
+  prefix?: string
   type: LaneType
   isActive: boolean
   currentNumber: number
@@ -85,6 +88,7 @@ export default function AdminDashboard() {
     display_secondary_color: '#1a7268',
     display_header_bg_color: '#ffffff',
     display_text_color: '#ffffff',
+    display_video_muted: 'true',
   })
   const [displaySettingsSaving, setDisplaySettingsSaving] = useState(false)
   const [mediaItemsList, setMediaItemsList] = useState<Array<{ url: string; duration: number }>>([])
@@ -110,7 +114,8 @@ export default function AdminDashboard() {
     username: '',
     password: '',
     name: '',
-    role: UserRole.USER as UserRole
+    role: UserRole.USER as UserRole,
+    window: ''
   })
 
   // Lane form state
@@ -119,6 +124,8 @@ export default function AdminDashboard() {
   const [laneForm, setLaneForm] = useState({
     name: '',
     description: '',
+    serviceGroup: '',
+    prefix: '',
     type: LaneType.REGULAR as LaneType
   })
 
@@ -202,6 +209,7 @@ export default function AdminDashboard() {
           display_secondary_color: dsData.display_secondary_color ?? '#1a7268',
           display_header_bg_color: dsData.display_header_bg_color ?? '#ffffff',
           display_text_color: dsData.display_text_color ?? '#ffffff',
+          display_video_muted: dsData.display_video_muted ?? 'true',
         })
         try {
           const items = JSON.parse(dsData.display_media_items || '[]')
@@ -265,7 +273,8 @@ export default function AdminDashboard() {
         body: JSON.stringify({
           name: userForm.name,
           role: userForm.role,
-          password: userForm.password || undefined
+          password: userForm.password || undefined,
+          window: userForm.window || undefined
         })
       })
 
@@ -416,7 +425,8 @@ export default function AdminDashboard() {
       username: '',
       password: '',
       name: '',
-      role: UserRole.USER as UserRole
+      role: UserRole.USER as UserRole,
+      window: ''
     })
   }
 
@@ -427,7 +437,8 @@ export default function AdminDashboard() {
         username: user.username,
         password: '',
         name: user.name,
-        role: user.role
+        role: user.role,
+        window: user.window || ''
       })
     } else {
       setEditingUser(null)
@@ -563,6 +574,8 @@ export default function AdminDashboard() {
     setLaneForm({
       name: '',
       description: '',
+      serviceGroup: '',
+      prefix: '',
       type: LaneType.REGULAR as LaneType
     })
   }
@@ -573,6 +586,8 @@ export default function AdminDashboard() {
       setLaneForm({
         name: lane.name,
         description: lane.description || '',
+        serviceGroup: lane.serviceGroup || '',
+        prefix: lane.prefix || '',
         type: lane.type
       })
     } else {
@@ -763,6 +778,7 @@ export default function AdminDashboard() {
               <TableRow>
                 <TableHead>Username</TableHead>
                 <TableHead>Name</TableHead>
+                <TableHead>Window</TableHead>
                 <TableHead>Role</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Assigned Lanes</TableHead>
@@ -774,6 +790,15 @@ export default function AdminDashboard() {
                 <TableRow key={user.id}>
                   <TableCell className="font-medium">{user.username}</TableCell>
                   <TableCell>{user.name}</TableCell>
+                  <TableCell>
+                    {user.window ? (
+                      <Badge variant="outline" className="text-xs font-semibold px-2.5 py-0.5 rounded-full border border-border bg-purple-100 text-purple-800">
+                        {user.window}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <Badge
                       variant={user.role === UserRole.ADMIN ? 'default' : 'outline'}
@@ -859,6 +884,8 @@ export default function AdminDashboard() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
+                <TableHead>Service Group</TableHead>
+                <TableHead>Prefix</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead>Status</TableHead>
@@ -870,6 +897,24 @@ export default function AdminDashboard() {
               {lanes.map((lane) => (
                 <TableRow key={lane.id}>
                   <TableCell className="font-medium">{lane.name}</TableCell>
+                  <TableCell>
+                    {lane.serviceGroup ? (
+                      <Badge variant="secondary" className="text-xs font-semibold px-2 py-0.5 rounded border border-border bg-purple-100 text-purple-800">
+                        {lane.serviceGroup}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground text-xs">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {lane.prefix ? (
+                      <Badge variant="secondary" className="text-xs font-semibold px-2 py-0.5 rounded border border-border bg-orange-100 text-orange-800">
+                        {lane.prefix}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground text-xs">—</span>
+                    )}
+                  </TableCell>
                   <TableCell>
                   <Badge
                     variant={lane.type === LaneType.PRIORITY ? 'secondary' : 'secondary'}
@@ -1076,6 +1121,35 @@ export default function AdminDashboard() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {displaySettings.display_media_type === 'video' && (
+                <div className="flex items-center gap-3">
+                  <Label>Video Audio</Label>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={displaySettings.display_video_muted === 'false'}
+                    onClick={() =>
+                      setDisplaySettings((s) => ({
+                        ...s,
+                        display_video_muted: s.display_video_muted === 'false' ? 'true' : 'false',
+                      }))
+                    }
+                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                      displaySettings.display_video_muted === 'false' ? 'bg-primary' : 'bg-input'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                        displaySettings.display_video_muted === 'false' ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                  <span className="text-sm text-muted-foreground">
+                    {displaySettings.display_video_muted === 'false' ? 'Audio On' : 'Muted'}
+                  </span>
+                </div>
+              )}
 
               {displaySettings.display_media_type !== 'none' && (
                 <div className="space-y-3">
@@ -1483,6 +1557,15 @@ export default function AdminDashboard() {
               />
             </div>
             <div className="space-y-2">
+              <Label htmlFor="window">Window Label <span className="text-muted-foreground font-normal">(shown on display screen)</span></Label>
+              <Input
+                id="window"
+                placeholder="e.g. Window 1, W-2"
+                value={userForm.window}
+                onChange={(e) => setUserForm({...userForm, window: e.target.value})}
+              />
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="role">Role</Label>
               <Select value={userForm.role} onValueChange={(value) => setUserForm({...userForm, role: value as UserRole})}>
                 <SelectTrigger>
@@ -1548,6 +1631,25 @@ export default function AdminDashboard() {
                 <SelectItem value={LaneType.PRIORITY}>Priority</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="lane-service-group">Service Group</Label>
+              <Input
+                id="lane-service-group"
+                placeholder="e.g. Birth, Verification (groups lanes on reservation screen)"
+                value={laneForm.serviceGroup}
+                onChange={(e) => setLaneForm({...laneForm, serviceGroup: e.target.value})}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="lane-prefix">Ticket Prefix</Label>
+              <Input
+                id="lane-prefix"
+                placeholder="e.g. B for Birth → B001, C for Correction → C001"
+                maxLength={5}
+                value={laneForm.prefix}
+                onChange={(e) => setLaneForm({...laneForm, prefix: e.target.value.toUpperCase()})}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="lane-description">Description</Label>

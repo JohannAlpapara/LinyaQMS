@@ -5,6 +5,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 interface LaneStatus {
   id: string
   name: string
+  serviceGroup: string | null
+  prefix: string | null
+  window: string | null
   currentNumber: number
   lastServedNumber: number
   waitingCount: number
@@ -28,6 +31,7 @@ interface DisplaySettings {
   display_secondary_color: string
   display_header_bg_color: string
   display_text_color: string
+  display_video_muted: string
 }
 
 const DEFAULT_SETTINGS: DisplaySettings = {
@@ -42,6 +46,7 @@ const DEFAULT_SETTINGS: DisplaySettings = {
   display_secondary_color: '#1a7268',
   display_header_bg_color: '#ffffff',
   display_text_color: '#ffffff',
+  display_video_muted: 'true',
 }
 
 const REQUEST_TIMEOUT_MS = 8000
@@ -80,10 +85,14 @@ export default function DisplayPage() {
   const [isPageVisible, setIsPageVisible] = useState(true)
   const [currentMediaIndex, setCurrentMediaIndex] = useState(0)
   const [mediaKey, setMediaKey] = useState(0)
+  const [ytApiReady, setYtApiReady] = useState(false)
 
   const audioRef = useRef<ExtendedAudioElement | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const previousLanesRef = useRef<LaneStatus[]>([])
+  const ytPlayerRef = useRef<{ destroy(): void; mute(): void; unMute(): void } | null>(null)
+  const ytContainerRef = useRef<HTMLDivElement>(null)
+  const handleMediaNextRef = useRef<() => void>(() => {})
 
   // Fetch display settings
   const fetchSettings = useCallback(async () => {
@@ -132,15 +141,18 @@ export default function DisplayPage() {
 
   const sortLanes = useCallback((data: LaneStatus[]) => {
     return [...data].sort((a, b) => {
-      const nameCompare = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
-      if (nameCompare !== 0) return nameCompare
-      return Number(a.id) - Number(b.id)
+      const wa = a.window !== null ? parseInt(a.window, 10) : Infinity
+      const wb = b.window !== null ? parseInt(b.window, 10) : Infinity
+      if (isFinite(wa) && isFinite(wb)) return wa - wb
+      if (isFinite(wa)) return -1
+      if (isFinite(wb)) return 1
+      return 0
     })
   }, [])
 
   const fetchLaneStatus = useCallback(async () => {
     try {
-      const response = await fetchWithTimeout('/api/queue/reservation', {
+      const response = await fetchWithTimeout('/api/queue/display-lanes', {
         cache: 'no-cache',
         headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', Pragma: 'no-cache' },
       })
@@ -317,6 +329,8 @@ export default function DisplayPage() {
     setCurrentMediaIndex((prev) => (prev + 1) % mediaItems.length)
     setMediaKey((prev) => prev + 1)
   }, [mediaItems.length])
+  // Keep ref up to date so YT player callbacks never hold a stale closure
+  handleMediaNextRef.current = handleMediaNext
 
   // Reset playlist index when settings change
   useEffect(() => {
@@ -342,22 +356,86 @@ export default function DisplayPage() {
     return () => clearTimeout(timer)
   }, [settings.display_media_type, mediaItems, currentMediaIndex, handleMediaNext])
 
-  // YouTube video-ended detection via postMessage (no external script needed)
+  // Derive current media item (must be above YouTube effects that reference it)
+  const effectiveIndex = mediaItems.length > 0 ? currentMediaIndex : 0
+  const currentMedia = mediaItems[effectiveIndex] ?? null
+
+  // ── YouTube IFrame Player API ──────────────────────────────
+  // Load the YouTube IFrame API script once when video mode is active.
+  // Using the official JS API (instead of raw postMessage parsing) is the
+  // only reliable way to receive onStateChange=ENDED events across all
+  // browsers without requiring user interaction.
   useEffect(() => {
     if (settings.display_media_type !== 'video') return
-    const handler = (event: MessageEvent) => {
-      if (event.origin !== 'https://www.youtube.com' && event.origin !== 'https://www.youtube-nocookie.com') return
-      try {
-        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
-        const ended =
-          (data.event === 'onStateChange' && data.info === 0) ||
-          (data.event === 'infoDelivery' && data.info?.playerState === 0)
-        if (ended) handleMediaNext()
-      } catch { /* noop */ }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const win = window as any
+    if (win.YT?.Player) { setYtApiReady(true); return }
+    if (document.getElementById('yt-iframe-api')) return
+    const script = document.createElement('script')
+    script.id = 'yt-iframe-api'
+    script.src = 'https://www.youtube.com/iframe_api'
+    document.head.appendChild(script)
+    win.onYouTubeIframeAPIReady = () => setYtApiReady(true)
+  }, [settings.display_media_type])
+
+  // Create / replace the YouTube player whenever the current video URL changes
+  // or the API becomes ready for the first time.
+  useEffect(() => {
+    if (settings.display_media_type !== 'video' || !ytApiReady || !currentMedia) return
+    const urlMatch = currentMedia.url.match(
+      /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/
+    )
+    const videoId = urlMatch ? urlMatch[1] : null
+    if (!videoId || !ytContainerRef.current) return
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const YT = (window as any).YT
+    if (!YT?.Player) return
+
+    const muted = settings.display_video_muted !== 'false'
+
+    // Destroy previous player and clear the container so YT gets a fresh element
+    ytPlayerRef.current?.destroy()
+    ytPlayerRef.current = null
+    ytContainerRef.current.innerHTML = ''
+    const placeholder = document.createElement('div')
+    ytContainerRef.current.appendChild(placeholder)
+
+    ytPlayerRef.current = new YT.Player(placeholder, {
+      videoId,
+      width: '100%',
+      height: '100%',
+      playerVars: {
+        autoplay: 1,
+        mute: muted ? 1 : 0,
+        controls: 0,
+        rel: 0,
+        modestbranding: 1,
+        playsinline: 1,
+      },
+      events: {
+        onStateChange(e: { data: number }) {
+          if (e.data === 0) handleMediaNextRef.current() // 0 = YT.PlayerState.ENDED
+        },
+      },
+    })
+
+    return () => {
+      ytPlayerRef.current?.destroy()
+      ytPlayerRef.current = null
     }
-    window.addEventListener('message', handler)
-    return () => window.removeEventListener('message', handler)
-  }, [settings.display_media_type, handleMediaNext])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.display_media_type, currentMedia?.url, ytApiReady, settings.display_video_muted])
+
+  // Sync mute changes to an already-running player without restarting it
+  useEffect(() => {
+    const p = ytPlayerRef.current
+    if (!p) return
+    if (settings.display_video_muted === 'false') {
+      p.unMute()
+    } else {
+      p.mute()
+    }
+  }, [settings.display_video_muted])
 
   const {
     display_header_type: headerType,
@@ -372,28 +450,29 @@ export default function DisplayPage() {
     display_text_color: textColor,
   } = settings
 
-  // Derive current media item
-  const effectiveIndex = mediaItems.length > 0 ? currentMediaIndex : 0
-  const currentMedia = mediaItems[effectiveIndex] ?? null
-
-  // Convert YouTube watch/share/embed URLs to embed URLs with API enabled
-  function getYouTubeEmbedUrl(url: string): string | null {
-    const match = url.match(
+  // Check whether the current item is a YouTube video
+  function extractYouTubeId(url: string): string | null {
+    const m = url.match(
       /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/
     )
-    if (match) {
-      const id = match[1]
-      const origin = typeof window !== 'undefined' ? `&origin=${encodeURIComponent(window.location.origin)}` : ''
-      return `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&loop=0&controls=0&rel=0&modestbranding=1&playsinline=1&enablejsapi=1${origin}`
-    }
-    return null
+    return m ? m[1] : null
   }
+  const isYouTubeVideo = mediaType === 'video' && !!extractYouTubeId(currentMedia?.url ?? '')
 
   // Auto-scale font based on row count
   const rowCount = Math.max(lanes.length, 1)
   const counterFontSize = `clamp(0.875rem, ${Math.min(6, 36 / rowCount)}vh, 3.5rem)`
   const numberFontSize = `clamp(1rem, ${Math.min(7.5, 44 / rowCount)}vh, 5rem)`
   const headerFontSize = `clamp(0.5rem, ${Math.min(2.5, 14 / rowCount)}vh, 1.5rem)`
+
+  // Service label font: same size as counter but shrinks proportionally for long names
+  const getServiceFontSize = (name: string): string => {
+    const baseVh = Math.min(6, 36 / rowCount)
+    const maxChars = 9 // chars that fit comfortably at full size
+    const scale = name.length > maxChars ? maxChars / name.length : 1
+    const minRem = Math.max(0.5, 0.875 * scale)
+    return `clamp(${minRem.toFixed(3)}rem, ${(baseVh * scale).toFixed(2)}vh, ${(3.5 * scale).toFixed(2)}rem)`
+  }
 
   if (isLoading) {
     return (
@@ -458,14 +537,20 @@ export default function DisplayPage() {
         >
           {/* Column headers */}
           <div
-            className="flex-none grid grid-cols-2 border-b"
-            style={{ backgroundColor: secondaryColor, borderColor: `${textColor}33` }}
+            className="flex-none grid border-b"
+            style={{ backgroundColor: secondaryColor, borderColor: `${textColor}33`, gridTemplateColumns: '3fr 1fr 2fr' }}
           >
             <div
               className="text-center font-bold py-3 px-2 border-r"
               style={{ color: textColor, fontSize: headerFontSize, borderColor: `${textColor}33` }}
             >
-              COUNTER
+              SERVICE
+            </div>
+            <div
+              className="text-center font-bold py-3 px-2 border-r"
+              style={{ color: textColor, fontSize: headerFontSize, borderColor: `${textColor}33` }}
+            >
+              WINDOW
             </div>
             <div
               className="text-center font-bold py-3 px-2"
@@ -498,15 +583,23 @@ export default function DisplayPage() {
                 return (
                   <div
                     key={lane.id}
-                    className="flex-1 grid grid-cols-2 transition-colors duration-500 min-h-0 border-b"
-                    style={{ backgroundColor: rowBg, borderColor: `${textColor}18` }}
+                    className="flex-1 grid transition-colors duration-500 min-h-0 border-b"
+                    style={{ backgroundColor: rowBg, borderColor: `${textColor}18`, gridTemplateColumns: '3fr 1fr 2fr' }}
                   >
-                    {/* Counter label */}
+                    {/* Service label */}
+                    <div
+                      className="flex items-center justify-center text-center font-semibold px-3 border-r overflow-hidden"
+                      style={{ color: labelColor, fontSize: getServiceFontSize(lane.serviceGroup || lane.name), borderColor: `${textColor}18` }}
+                    >
+                      <span className="leading-tight whitespace-nowrap">{lane.serviceGroup || lane.name}</span>
+                    </div>
+
+                    {/* Window label */}
                     <div
                       className="flex items-center justify-center text-center font-semibold px-3 border-r overflow-hidden"
                       style={{ color: labelColor, fontSize: counterFontSize, borderColor: `${textColor}18` }}
                     >
-                      <span className="truncate leading-tight">{lane.name}</span>
+                      <span className="truncate leading-tight">{lane.window || '—'}</span>
                     </div>
 
                     {/* Ticket number */}
@@ -516,7 +609,9 @@ export default function DisplayPage() {
                     >
                       {lane.currentNumber === 0
                         ? '----'
-                        : lane.currentNumber.toString().padStart(4, '0')}
+                        : lane.prefix
+                          ? lane.prefix + lane.currentNumber.toString().padStart(3, '0')
+                          : lane.currentNumber.toString().padStart(4, '0')}
                     </div>
                   </div>
                 )
@@ -526,42 +621,32 @@ export default function DisplayPage() {
         </div>
 
         {/* Right: Media Playlist */}
-        {mediaType !== 'none' && mediaItems.length > 0 && (() => {
-          const youtubeUrl = mediaType === 'video' ? getYouTubeEmbedUrl(currentMedia?.url ?? '') : null
-          return (
-            <div className="flex-1 bg-black overflow-hidden">
-              {mediaType === 'image' ? (
-                <img
-                  key={mediaKey}
-                  src={currentMedia?.url}
-                  alt="Display media"
-                  className="w-full h-full object-cover"
-                  onError={handleMediaNext}
-                />
-              ) : youtubeUrl ? (
-                <iframe
-                  key={mediaKey}
-                  src={youtubeUrl}
-                  className="w-full h-full border-0"
-                  allow="autoplay; encrypted-media"
-                  allowFullScreen
-                  title="Display video"
-                />
-              ) : (
-                <video
-                  key={mediaKey}
-                  src={currentMedia?.url}
-                  autoPlay
-                  muted
-                  playsInline
-                  className="w-full h-full object-cover"
-                  onEnded={handleMediaNext}
-                  onError={handleMediaNext}
-                />
-              )}
-            </div>
-          )
-        })()}
+        {mediaType !== 'none' && mediaItems.length > 0 && (
+          <div className="flex-1 bg-black overflow-hidden">
+            {mediaType === 'image' ? (
+              <img
+                key={mediaKey}
+                src={currentMedia?.url}
+                alt="Display media"
+                className="w-full h-full object-cover"
+                onError={handleMediaNext}
+              />
+            ) : isYouTubeVideo ? (
+              <div ref={ytContainerRef} className="w-full h-full bg-black" />
+            ) : (
+              <video
+                key={mediaKey}
+                src={currentMedia?.url}
+                autoPlay
+                muted={settings.display_video_muted !== 'false'}
+                playsInline
+                className="w-full h-full object-cover"
+                onEnded={handleMediaNext}
+                onError={handleMediaNext}
+              />
+            )}
+          </div>
+        )}
         {mediaType !== 'none' && mediaItems.length === 0 && (
           <div className="flex-1 bg-black" />
         )}

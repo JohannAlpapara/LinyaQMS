@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { printTicketText } from '@/lib/printers'
 
 interface PrintTicketRequest {
-  queueNumber: number
+  queueNumber: string | number
   laneName: string
   currentNumber: number
   timestamp: string

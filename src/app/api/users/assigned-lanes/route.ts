@@ -44,13 +44,38 @@ export async function GET(request: NextRequest) {
     })
 
     // Transform the data to match the Lane interface, using authoritative lane counters
-    const lanes = assignedLanes.map(assignment => {
-      const queueItems = assignment.lane.queueItems
+    const lanes = await Promise.all(assignedLanes.map(async (assignment) => {
+      let queueItems = assignment.lane.queueItems
+
+      // For lanes in a serviceGroup, WAITING tickets live on the primary lane (lowest ID).
+      // Show the primary pool's waiting items so every cashier in the group
+      // sees the correct queue depth, regardless of which window they are on.
+      if (assignment.lane.serviceGroup) {
+        const primaryLane = await prisma.lane.findFirst({
+          where: { serviceGroup: assignment.lane.serviceGroup, isActive: true },
+          orderBy: { id: 'asc' },
+          select: { id: true },
+        })
+        if (primaryLane && primaryLane.id !== assignment.lane.id) {
+          const primaryWaiting = await prisma.queueItem.findMany({
+            where: { laneId: primaryLane.id, queueDate, status: 'WAITING' },
+            orderBy: { number: 'asc' },
+          })
+          // Keep this lane's own CALLED/SERVED items; replace WAITING with primary pool
+          const ownNonWaiting = assignment.lane.queueItems.filter((i) => i.status !== 'WAITING')
+          queueItems = [
+            ...primaryWaiting.map((i) => ({ number: i.number, status: i.status })),
+            ...ownNonWaiting,
+          ]
+        }
+      }
+
       return {
         id: assignment.lane.id,
         name: assignment.lane.name,
         description: assignment.lane.description,
         type: assignment.lane.type,
+        prefix: assignment.lane.prefix,
         currentNumber: assignment.lane.currentNumber,
         lastServedNumber: assignment.lane.lastServedNumber,
         queueItems: queueItems.map((item: { number: number; status: string }) => ({
@@ -58,7 +83,7 @@ export async function GET(request: NextRequest) {
           status: item.status
         }))
       }
-    })
+    }))
 
     return NextResponse.json({ user: { id: currentUser.id, name: currentUser.name, username: currentUser.username }, lanes })
   } catch (error) {

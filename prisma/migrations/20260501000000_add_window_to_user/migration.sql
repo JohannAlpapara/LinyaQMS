@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD COLUMN `window` VARCHAR(255) NULL;

@@ -7,15 +7,49 @@ import { broadcastAllLaneData } from '@/lib/broadcast'
 
 export async function POST(request: NextRequest) {
   try {
-    let { laneId } = await request.json();
-    // Ensure laneId is an integer (Prisma expects Int, not string)
-    if (typeof laneId === 'string') laneId = parseInt(laneId, 10);
+    const body = await request.json();
+    const { serviceGroup } = body;
+    let { laneId } = body;
 
-    if (!laneId) {
+    if (!serviceGroup && !laneId) {
       return NextResponse.json(
-        { error: 'Lane ID is required' },
+        { error: 'serviceGroup or laneId is required' },
         { status: 400 }
       )
+    }
+
+    // Use queueDate (UTC midnight) for daily queue logic
+    const now = new Date();
+    const queueDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+    // If serviceGroup is provided, auto-select the lane with fewest waiting items today
+    if (serviceGroup) {
+      const groupLanes = await prisma.lane.findMany({
+        where: { serviceGroup, isActive: true },
+        select: {
+          id: true,
+          name: true,
+          serviceGroup: true,
+          queueItems: {
+            where: { queueDate, status: 'WAITING' },
+            select: { id: true }
+          }
+        },
+        orderBy: { id: 'asc' }  // lowest ID = primary lane
+      });
+
+      if (groupLanes.length === 0) {
+        return NextResponse.json(
+          { error: 'No active lanes found for this service' },
+          { status: 404 }
+        );
+      }
+
+      // Always use the primary lane (lowest ID) — shared single queue
+      laneId = groupLanes[0].id;
+    } else {
+      // Ensure laneId is an integer (Prisma expects Int, not string)
+      if (typeof laneId === 'string') laneId = parseInt(laneId, 10);
     }
 
     const lane = await prisma.lane.findUnique({
@@ -28,11 +62,6 @@ export async function POST(request: NextRequest) {
         { status: 404 }
       )
     }
-
-    // Use queueDate (UTC midnight) for daily queue logic
-    const now = new Date();
-    const queueDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-
 
     // Find the highest queue number for today for this lane (using queueDate)
     const lastQueueItemToday = await prisma.queueItem.findFirst({
@@ -100,6 +129,7 @@ export async function POST(request: NextRequest) {
 
     const responseObj = {
       queueNumber: nextNumber,
+      prefix: lane.prefix ?? null,
       laneName: lane.name,
       currentNumber: lane.currentNumber,
       waitingCount: waitingCount,
@@ -126,56 +156,68 @@ export async function GET() {
         id: true,
         name: true,
         description: true,
+        serviceGroup: true,
         currentNumber: true,
         lastServedNumber: true,
         queueItems: {
-          where: {
-            queueDate: queueDate
-          },
-          select: {
-            number: true,
-            status: true
-          },
-          orderBy: {
-            number: 'asc'
-          }
+          where: { queueDate },
+          select: { number: true, status: true },
+          orderBy: { number: 'asc' }
         }
       },
-      orderBy: {
-        name: 'asc'
-      }
+      orderBy: { name: 'asc' }
     })
 
-    const laneStatus = lanes.map(lane => {
-      // Only consider today's queue items
-      const waitingItems = lane.queueItems.filter(item => item.status === QueueItemStatus.WAITING)
-      const calledItems = lane.queueItems.filter(item => item.status === QueueItemStatus.CALLED)
-      const allNumbers = lane.queueItems.map(item => item.number)
+    // Group lanes by serviceGroup (or by individual lane name if no serviceGroup)
+    const groupMap = new Map<string, typeof lanes>()
+    for (const lane of lanes) {
+      const key = lane.serviceGroup?.trim() || `__lane__${lane.id}`
+      if (!groupMap.has(key)) groupMap.set(key, [])
+      groupMap.get(key)!.push(lane)
+    }
 
-      // Authoritative numbers from lane table
-      const currentNumber = lane.currentNumber
-      const lastServedNumber = lane.lastServedNumber
+    const serviceStatus = Array.from(groupMap.entries()).map(([key, groupLanes]) => {
+      const isGroup = !key.startsWith('__lane__')
+      // Display name: serviceGroup value or individual lane name
+      const displayName = isGroup ? key : groupLanes[0].name
+      const description = groupLanes.length === 1 ? groupLanes[0].description : undefined
 
-      // Calculate next number with simple cycling (1-999, then back to 1)
-      const maxNumberToday = allNumbers.length > 0 ? Math.max(...allNumbers) : 0
-      let nextNumber = maxNumberToday + 1
-      if (nextNumber > 999) {
-        nextNumber = 1
-      }
+      // waitingCount: all tickets still waiting (live on primary lane)
+      const waitingCount = groupLanes.reduce((sum, l) =>
+        sum + l.queueItems.filter(i => i.status === QueueItemStatus.WAITING).length, 0)
+      const calledCount = groupLanes.reduce((sum, l) =>
+        sum + l.queueItems.filter(i => i.status === QueueItemStatus.CALLED).length, 0)
+
+      // currentNumber: the highest currentNumber across group lanes (most recently called overall)
+      const currentNumber = groupLanes.reduce((max, l) =>
+        l.currentNumber > max ? l.currentNumber : max, 0)
+
+      // nextNumber: derived from the primary lane (lowest ID) which holds the shared pool
+      const primaryLane = [...groupLanes].sort((a, b) => Number(a.id) - Number(b.id))[0]
+      const maxNumberToday = primaryLane.queueItems.length > 0
+        ? Math.max(...primaryLane.queueItems.map(i => i.number))
+        : 0
+      const nextNumber = maxNumberToday >= 999 ? 1 : maxNumberToday + 1
 
       return {
-        id: lane.id,
-        name: lane.name,
-        description: lane.description,
+        // Use serviceGroup as the ID for grouped services, laneId for singles
+        id: isGroup ? key : String(groupLanes[0].id),
+        serviceGroup: isGroup ? key : null,
+        laneId: isGroup ? null : groupLanes[0].id,
+        name: displayName,
+        description,
         currentNumber,
-        lastServedNumber,
-        waitingCount: waitingItems.length,
-        calledCount: calledItems.length,
-        nextNumber
+        waitingCount,
+        calledCount,
+        nextNumber,
+        laneCount: groupLanes.length
       }
     })
 
-    return NextResponse.json(laneStatus)
+    // Sort alphabetically by name
+    serviceStatus.sort((a, b) => a.name.localeCompare(b.name))
+
+    return NextResponse.json(serviceStatus)
   } catch (error) {
     console.error('Get queue status error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

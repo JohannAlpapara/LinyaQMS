@@ -15,7 +15,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { name, role, password, isActive } = await request.json()
+    const { name, role, password, isActive, window: windowLabel } = await request.json()
     const userId = parseInt(resolvedParams.id)
 
     if (isNaN(userId)) {
@@ -28,11 +28,13 @@ export async function PATCH(
       role?: UserRole
       password?: string
       isActive?: boolean
+      window?: string | null
     } = {}
     
     if (name !== undefined) updateData.name = name
     if (role !== undefined) updateData.role = role
     if (isActive !== undefined) updateData.isActive = isActive
+    if (windowLabel !== undefined) updateData.window = windowLabel?.trim() || null
     
     // Only hash and update password if provided
     if (password && password.trim()) {

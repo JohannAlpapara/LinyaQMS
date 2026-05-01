@@ -14,7 +14,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { name, description, isActive, type } = await request.json()
+    const { name, description, isActive, type, serviceGroup, prefix } = await request.json()
     const laneId = parseInt(resolvedParams.id)
 
     if (isNaN(laneId)) {
@@ -27,12 +27,16 @@ export async function PATCH(
       description?: string
       isActive?: boolean
       type?: LaneType
+      serviceGroup?: string | null
+      prefix?: string | null
     } = {}
     
     if (name !== undefined) updateData.name = name
     if (description !== undefined) updateData.description = description
     if (isActive !== undefined) updateData.isActive = isActive
     if (type !== undefined) updateData.type = type as LaneType
+    if (serviceGroup !== undefined) updateData.serviceGroup = serviceGroup?.trim() || null
+    if (prefix !== undefined) updateData.prefix = prefix?.trim().toUpperCase() || null
 
     const updatedLane = await prisma.lane.update({
       where: { id: laneId },

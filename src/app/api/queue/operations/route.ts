@@ -52,10 +52,22 @@ export async function POST(request: NextRequest) {
         const now = new Date()
         const queueDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
 
-        // Find the next waiting queue item with number greater than current lane value
+        // For lanes in a serviceGroup, all tickets live on the primary lane (lowest ID).
+        // Pull from the primary pool regardless of which window the cashier is on.
+        let sourceLaneId = laneId
+        if (lane.serviceGroup) {
+          const primaryLane = await prisma.lane.findFirst({
+            where: { serviceGroup: lane.serviceGroup, isActive: true },
+            orderBy: { id: 'asc' },
+            select: { id: true },
+          })
+          if (primaryLane) sourceLaneId = primaryLane.id
+        }
+
+        // Find the next waiting queue item with number greater than this cashier's current number
         let queueItem = await prisma.queueItem.findFirst({
           where: {
-            laneId,
+            laneId: sourceLaneId,
             queueDate,
             status: QueueItemStatus.WAITING,
             number: {
@@ -69,7 +81,7 @@ export async function POST(request: NextRequest) {
         if (!queueItem) {
           queueItem = await prisma.queueItem.findFirst({
             where: {
-              laneId,
+              laneId: sourceLaneId,
               queueDate,
               status: QueueItemStatus.WAITING
             },
@@ -87,16 +99,17 @@ export async function POST(request: NextRequest) {
         const nextNumber = queueItem.number
 
         await prisma.$transaction(async (tx) => {
-          // Update lane current number
+          // Update this cashier's lane current number
           await tx.lane.update({
             where: { id: laneId },
             data: { currentNumber: nextNumber }
           })
 
-          // Mark queue item as called
+          // Claim the ticket: reassign it to the calling lane and mark as called
           await tx.queueItem.update({
             where: { id: queueItem.id },
             data: {
+              laneId,  // move from primary pool to this cashier's lane
               status: QueueItemStatus.CALLED,
               calledAt: new Date()
             }

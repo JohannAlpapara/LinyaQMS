@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { name, description } = await request.json()
+    const { name, description, serviceGroup, prefix } = await request.json()
 
     if (!name) {
       return NextResponse.json(
@@ -68,7 +68,9 @@ export async function POST(request: NextRequest) {
     const lane = await prisma.lane.create({
       data: {
         name,
-        description
+        description,
+        serviceGroup: serviceGroup?.trim() || null,
+        prefix: prefix?.trim().toUpperCase() || null
       },
       include: {
         assignedUsers: {

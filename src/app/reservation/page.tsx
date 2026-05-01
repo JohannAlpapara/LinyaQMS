@@ -46,17 +46,19 @@ function formatDayOfWeek(date: Date) {
 
 interface LaneStatus {
   id: string
+  serviceGroup: string | null
+  laneId: number | null
   name: string
   description?: string
   currentNumber: number
-  lastServedNumber: number
   waitingCount: number
   calledCount: number
   nextNumber: number
+  laneCount: number
 }
 
 interface QueueTicket {
-  queueNumber: number
+  queueNumber: string
   laneName: string
   currentNumber: number
   waitingCount: number
@@ -252,28 +254,34 @@ export default function ReservationPage() {
     }
   }
 
-  const getQueueNumber = async (laneId: string) => {
+  const getQueueNumber = async (lane: LaneStatus) => {
     if (gettingNumberFor) return
     if (!isPrinterConnected) {
       toast.warning('Printer is not connected or not ready; the ticket may not print.')
     }
-    setGettingNumberFor(laneId)
+    setGettingNumberFor(lane.id)
     try {
+      const body = lane.serviceGroup
+        ? { serviceGroup: lane.serviceGroup }
+        : { laneId: lane.laneId }
       const response = await fetch('/api/queue/reservation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ laneId }),
+        body: JSON.stringify(body),
       })
       if (response.ok) {
         const data = await response.json()
+        const formattedNumber: string = data.prefix
+          ? data.prefix + data.queueNumber.toString().padStart(3, '0')
+          : data.queueNumber.toString().padStart(4, '0')
         await printTicket({
-          queueNumber: data.queueNumber,
+          queueNumber: formattedNumber,
           laneName: data.laneName,
           currentNumber: data.currentNumber,
           waitingCount: data.waitingCount,
           estimatedWait: data.estimatedWait,
         })
-        toast.success(`Queue number ${data.queueNumber} assigned for ${data.laneName}!`)
+        toast.success(`Queue number ${formattedNumber} assigned for ${data.laneName}!`)
         fetchLaneStatus()
       } else {
         const data = await response.json()
@@ -362,7 +370,7 @@ export default function ReservationPage() {
             return (
               <button
                 key={lane.id}
-                onClick={() => getQueueNumber(lane.id)}
+                onClick={() => getQueueNumber(lane)}
                 disabled={isAnyLoading}
                 className={[
                   'w-full flex items-center gap-4 rounded-xl px-5 py-4',
@@ -388,6 +396,11 @@ export default function ReservationPage() {
                   {lane.description && (
                     <div className="text-gray-600 text-sm truncate mt-0.5">
                       {lane.description}
+                    </div>
+                  )}
+                  {lane.laneCount > 1 && (
+                    <div className="text-gray-400 text-xs mt-0.5">
+                      {lane.laneCount} windows available
                     </div>
                   )}
                 </div>

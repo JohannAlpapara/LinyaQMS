@@ -38,6 +38,7 @@ model User {
   password  String
   role      UserRole
   name      String
+  window    String?  // Display window label (e.g. "Window 1", "2")
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -52,13 +53,15 @@ model User {
 }
 
 model Lane {
-  id          Int         @id @default(autoincrement())
-  name        String
-  description String?
-  type        LaneType    @default(REGULAR)
-  isActive    Boolean     @default(true)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id           Int         @id @default(autoincrement())
+  name         String
+  description  String?
+  serviceGroup String?     // Groups lanes under one service on reservation page
+  prefix       String?     // Ticket number prefix (e.g. "B" for Birth → B001)
+  type         LaneType    @default(REGULAR)
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 
   // Current queue number
   currentNumber Int @default(0)

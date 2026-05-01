@@ -13,6 +13,7 @@ interface Lane {
   name: string
   description?: string
   type: LaneType
+  prefix?: string | null
   currentNumber: number
   lastServedNumber: number
   queueItems: Array<{
@@ -88,16 +89,27 @@ export default function UserPage() {
         switch (action) {
           case 'NEXT':
             if (data.currentNumber) {
-              toast.success(`${lane?.name}: Now serving #${data.currentNumber}`, {
+              const formatted = lane?.prefix
+                ? lane.prefix + data.currentNumber.toString().padStart(3, '0')
+                : String(data.currentNumber).padStart(4, '0')
+              toast.success(`${lane?.name}: Now serving #${formatted}`, {
                 duration: 4000,
               })
             }
             break
           case 'CALL':
-            toast.success(`${lane?.name}: Called #${lane?.currentNumber} again`)
+            toast.success(`${lane?.name}: Called #${
+              lane?.prefix
+                ? lane.prefix + (lane?.currentNumber ?? 0).toString().padStart(3, '0')
+                : String(lane?.currentNumber ?? 0).padStart(4, '0')
+            } again`)
             break
           case 'BUZZ':
-            toast.success(`${lane?.name}: Buzzed #${lane?.currentNumber}`)
+            toast.success(`${lane?.name}: Buzzed #${
+              lane?.prefix
+                ? lane.prefix + (lane?.currentNumber ?? 0).toString().padStart(3, '0')
+                : String(lane?.currentNumber ?? 0).padStart(4, '0')
+            }`)
             break
           case 'SERVE':
             toast.success(`${lane?.name}: Customer #${data.servedNumber} served`)
@@ -278,11 +290,19 @@ export default function UserPage() {
                     {/* Compact Statistics Grid */}
                     <div className="grid grid-cols-4 gap-2 mb-4">
                       <div className="text-center p-2 bg-blue-50 rounded">
-                        <div className="text-xl font-bold text-blue-600">{lane.currentNumber}</div>
+                        <div className="text-xl font-bold text-blue-600">
+                          {lane.prefix && lane.currentNumber > 0
+                            ? lane.prefix + lane.currentNumber.toString().padStart(3, '0')
+                            : lane.currentNumber}
+                        </div>
                         <div className="text-xs text-blue-700">Current</div>
                       </div>
                       <div className="text-center p-2 bg-green-50 rounded">
-                        <div className="text-xl font-bold text-green-600">{lane.lastServedNumber}</div>
+                        <div className="text-xl font-bold text-green-600">
+                          {lane.prefix && lane.lastServedNumber > 0
+                            ? lane.prefix + lane.lastServedNumber.toString().padStart(3, '0')
+                            : lane.lastServedNumber}
+                        </div>
                         <div className="text-xs text-green-700">Served</div>
                       </div>
                       <div className="text-center p-2 bg-orange-50 rounded">
