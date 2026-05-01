@@ -315,29 +315,17 @@ export default function UserPage() {
                       </div>
                     </div>
 
-                    {/* Compact Control Buttons - Next/Call only */}
-                    <div className="grid grid-cols-2 gap-2 mb-3">
+                    {/* Compact Control Button */}
+                    <div className="mb-3">
                       <Button
                         onClick={() => handleOperation('NEXT', lane.id)}
                         disabled={isOperating[lane.id] || getWaitingCount(lane) === 0}
-                        className="h-14 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400"
+                        className="h-14 w-full text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400"
                         size="sm"
                       >
                         <div className="text-center">
                           <div className="text-lg">⏭️</div>
                           <div className="text-xs">Next</div>
-                        </div>
-                      </Button>
-
-                      <Button
-                        onClick={() => handleOperation('CALL', lane.id)}
-                        disabled={isOperating[lane.id] || lane.currentNumber === 0}
-                        className="h-14 text-sm bg-green-600 hover:bg-green-700"
-                        size="sm"
-                      >
-                        <div className="text-center">
-                          <div className="text-lg">📢</div>
-                          <div className="text-xs">Call</div>
                         </div>
                       </Button>
                     </div>
@@ -358,15 +346,12 @@ export default function UserPage() {
               ))}
             </div>
 
-            {/* Compact Instructions - Next/Call only */}
+            {/* Compact Instructions */}
             <Card className="bg-gray-50">
               <CardContent className="p-4">
-                <div className="grid md:grid-cols-2 gap-4 text-xs">
+                <div className="text-xs">
                   <div>
                     <strong className="text-blue-600">⏭️ Next:</strong> Advance queue
-                  </div>
-                  <div>
-                    <strong className="text-green-600">📢 Call:</strong> Re-announce number
                   </div>
                 </div>
               </CardContent>

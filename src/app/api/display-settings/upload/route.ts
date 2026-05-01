@@ -15,8 +15,6 @@ const ALLOWED_TYPES: Record<string, string> = {
   'video/ogg': '.ogv',
 }
 
-const MAX_SIZE = 100 * 1024 * 1024 // 100 MB
-
 export async function POST(request: NextRequest) {
   try {
     const currentUser = await getCurrentUser(request)
@@ -37,10 +35,6 @@ export async function POST(request: NextRequest) {
         { error: `File type not allowed: ${file.type}` },
         { status: 400 }
       )
-    }
-
-    if (file.size > MAX_SIZE) {
-      return NextResponse.json({ error: 'File too large (max 100 MB)' }, { status: 400 })
     }
 
     const filename = `${randomBytes(16).toString('hex')}${ext}`
