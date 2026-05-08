@@ -49,7 +49,7 @@ const DEFAULT_SETTINGS: DisplaySettings = {
 
 const REQUEST_TIMEOUT_MS = 8000
 const NORMAL_MEDIA_VOLUME = 1
-const DUCKED_MEDIA_VOLUME = 0.2
+const DUCKED_MEDIA_VOLUME = 0.07
 const DUCK_DURATION_MS = 1700
 
 async function fetchWithTimeout(input: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS) {
@@ -102,6 +102,7 @@ export default function DisplayPage() {
   const audioUnlockedRef = useRef(false)
 
   const audioRef = useRef<ExtendedAudioElement | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const previousLanesRef = useRef<LaneStatus[]>([])
   const ytPlayerRef = useRef<YtPlayerController | null>(null)
@@ -135,6 +136,10 @@ export default function DisplayPage() {
     audioUnlockedRef.current = true
     setAudioUnlocked(true)
     localStorage.setItem('display_audio_unlocked', 'true')
+    // Resume the shared AudioContext so chimes fire immediately after this gesture.
+    if (audioContextRef.current?.state === 'suspended') {
+      audioContextRef.current.resume().catch(() => {})
+    }
     // Called from a click handler (user gesture) — Chrome allows muted=false here.
     const v = videoElementRef.current
     if (v) {
@@ -196,29 +201,48 @@ export default function DisplayPage() {
     return () => clearInterval(interval)
   }, [fetchSettings])
 
-  // Initialize audio
+  // Initialize audio — one persistent AudioContext reused for all chimes.
+  // Chrome starts AudioContexts in 'suspended' state until a user gesture;
+  // we resume it the moment Chrome grants audio permission.
   useEffect(() => {
+    const extWindow = window as ExtendedWindow
+    const ctx = new (window.AudioContext || extWindow.webkitAudioContext!)()
+    audioContextRef.current = ctx
+
     audioRef.current = new Audio() as ExtendedAudioElement
     const playNotification = () => {
-      const extWindow = window as ExtendedWindow
-      const audioContext = new (window.AudioContext || extWindow.webkitAudioContext!)()
-      const frequencies = [800, 1000, 1200]
-      frequencies.forEach((freq, index) => {
-        setTimeout(() => {
-          const osc = audioContext.createOscillator()
-          const gain = audioContext.createGain()
-          osc.connect(gain)
-          gain.connect(audioContext.destination)
-          osc.frequency.setValueAtTime(freq, audioContext.currentTime)
-          gain.gain.setValueAtTime(0.3, audioContext.currentTime)
-          gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5)
-          osc.start(audioContext.currentTime)
-          osc.stop(audioContext.currentTime + 0.5)
-        }, index * 200)
-      })
+      const audioContext = audioContextRef.current
+      if (!audioContext) return
+      // Resume in case it's still suspended (e.g. MEI granted autoplay but
+      // AudioContext wasn't resumed yet).
+      const play = () => {
+        const frequencies = [800, 1000, 1200]
+        frequencies.forEach((freq, index) => {
+          setTimeout(() => {
+            const osc = audioContext.createOscillator()
+            const gain = audioContext.createGain()
+            osc.connect(gain)
+            gain.connect(audioContext.destination)
+            osc.frequency.setValueAtTime(freq, audioContext.currentTime)
+            gain.gain.setValueAtTime(0.3, audioContext.currentTime)
+            gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5)
+            osc.start(audioContext.currentTime)
+            osc.stop(audioContext.currentTime + 0.5)
+          }, index * 200)
+        })
+      }
+      if (audioContext.state === 'suspended') {
+        audioContext.resume().then(play).catch(() => {})
+      } else {
+        play()
+      }
     }
     if (audioRef.current) {
       audioRef.current.playNotification = playNotification
+    }
+    return () => {
+      ctx.close().catch(() => {})
+      audioContextRef.current = null
     }
   }, [])
 
@@ -764,7 +788,8 @@ export default function DisplayPage() {
                   // regular use) or if the user has interacted with the domain before.
                   v.play()
                     .then(() => {
-                      // Unmuted autoplay allowed — Chrome granted it via MEI or domain interaction.
+                      // Unmuted autoplay allowed — resume AudioContext to enable chimes.
+                      audioContextRef.current?.resume().catch(() => {})
                       audioUnlockedRef.current = true
                       setAudioUnlocked(true)
                       localStorage.setItem('display_audio_unlocked', 'true')
