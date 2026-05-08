@@ -88,7 +88,6 @@ export default function AdminDashboard() {
     display_secondary_color: '#1a7268',
     display_header_bg_color: '#ffffff',
     display_text_color: '#ffffff',
-    display_video_muted: 'true',
   })
   const [displaySettingsSaving, setDisplaySettingsSaving] = useState(false)
   const [mediaItemsList, setMediaItemsList] = useState<Array<{ url: string; duration: number }>>([])
@@ -209,7 +208,6 @@ export default function AdminDashboard() {
           display_secondary_color: dsData.display_secondary_color ?? '#1a7268',
           display_header_bg_color: dsData.display_header_bg_color ?? '#ffffff',
           display_text_color: dsData.display_text_color ?? '#ffffff',
-          display_video_muted: dsData.display_video_muted ?? 'true',
         })
         try {
           const items = JSON.parse(dsData.display_media_items || '[]')
@@ -1121,35 +1119,6 @@ export default function AdminDashboard() {
                   </SelectContent>
                 </Select>
               </div>
-
-              {displaySettings.display_media_type === 'video' && (
-                <div className="flex items-center gap-3">
-                  <Label>Video Audio</Label>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={displaySettings.display_video_muted === 'false'}
-                    onClick={() =>
-                      setDisplaySettings((s) => ({
-                        ...s,
-                        display_video_muted: s.display_video_muted === 'false' ? 'true' : 'false',
-                      }))
-                    }
-                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                      displaySettings.display_video_muted === 'false' ? 'bg-primary' : 'bg-input'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                        displaySettings.display_video_muted === 'false' ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                  <span className="text-sm text-muted-foreground">
-                    {displaySettings.display_video_muted === 'false' ? 'Audio On' : 'Muted'}
-                  </span>
-                </div>
-              )}
 
               {displaySettings.display_media_type !== 'none' && (
                 <div className="space-y-3">

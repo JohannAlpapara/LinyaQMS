@@ -31,7 +31,6 @@ interface DisplaySettings {
   display_secondary_color: string
   display_header_bg_color: string
   display_text_color: string
-  display_video_muted: string
 }
 
 const DEFAULT_SETTINGS: DisplaySettings = {
@@ -46,10 +45,12 @@ const DEFAULT_SETTINGS: DisplaySettings = {
   display_secondary_color: '#1a7268',
   display_header_bg_color: '#ffffff',
   display_text_color: '#ffffff',
-  display_video_muted: 'true',
 }
 
 const REQUEST_TIMEOUT_MS = 8000
+const NORMAL_MEDIA_VOLUME = 1
+const DUCKED_MEDIA_VOLUME = 0.2
+const DUCK_DURATION_MS = 1700
 
 async function fetchWithTimeout(input: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController()
@@ -74,6 +75,16 @@ interface ExtendedWindow extends Window {
   webkitAudioContext?: typeof AudioContext
 }
 
+interface YtPlayerController {
+  destroy(): void
+  mute(): void
+  unMute(): void
+  playVideo?: () => void
+  getIframe?: () => HTMLIFrameElement
+  setVolume?: (volume: number) => void
+  getVolume?: () => number
+}
+
 export default function DisplayPage() {
   const [lanes, setLanes] = useState<LaneStatus[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -86,13 +97,85 @@ export default function DisplayPage() {
   const [currentMediaIndex, setCurrentMediaIndex] = useState(0)
   const [mediaKey, setMediaKey] = useState(0)
   const [ytApiReady, setYtApiReady] = useState(false)
+  // null = not yet checked, true = unlocked, false = blocked (show overlay)
+  const [audioUnlocked, setAudioUnlocked] = useState<boolean | null>(null)
+  const audioUnlockedRef = useRef(false)
 
   const audioRef = useRef<ExtendedAudioElement | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const previousLanesRef = useRef<LaneStatus[]>([])
-  const ytPlayerRef = useRef<{ destroy(): void; mute(): void; unMute(): void } | null>(null)
+  const ytPlayerRef = useRef<YtPlayerController | null>(null)
   const ytContainerRef = useRef<HTMLDivElement>(null)
+  const videoElementRef = useRef<HTMLVideoElement | null>(null)
+  const volumeRestoreTimerRef = useRef<number | null>(null)
+  const mediaVolumeRef = useRef(NORMAL_MEDIA_VOLUME)
   const handleMediaNextRef = useRef<() => void>(() => {})
+
+  // On mount: check if Chrome allows autoplay-with-sound for this origin.
+  useEffect(() => {
+    type NavWithAutoplay = Navigator & { getAutoplayPolicy?: (type: string) => string }
+    const nav = navigator as NavWithAutoplay
+    if (typeof nav.getAutoplayPolicy === 'function') {
+      if (nav.getAutoplayPolicy('mediaelement') === 'allowed') {
+        audioUnlockedRef.current = true
+        setAudioUnlocked(true)
+        return
+      }
+    }
+    // Restore from localStorage (set after a prior successful unmuted play).
+    if (localStorage.getItem('display_audio_unlocked') === 'true') {
+      audioUnlockedRef.current = true
+      setAudioUnlocked(true)
+    } else {
+      setAudioUnlocked(false)
+    }
+  }, [])
+
+  const unlockAudio = useCallback(() => {
+    audioUnlockedRef.current = true
+    setAudioUnlocked(true)
+    localStorage.setItem('display_audio_unlocked', 'true')
+    // Called from a click handler (user gesture) — Chrome allows muted=false here.
+    const v = videoElementRef.current
+    if (v) {
+      v.muted = false
+      v.volume = mediaVolumeRef.current
+      if (v.paused) {
+        v.play().catch(() => {})
+      }
+    }
+  }, [])
+
+  const setMediaVolume = useCallback((volume: number) => {
+    const clamped = Math.min(Math.max(volume, 0), 1)
+    mediaVolumeRef.current = clamped
+
+    if (videoElementRef.current) {
+      videoElementRef.current.volume = clamped
+    }
+
+    const ytPlayer = ytPlayerRef.current
+    if (ytPlayer?.setVolume) {
+      ytPlayer.setVolume(Math.round(clamped * 100))
+    }
+  }, [])
+
+  const playNotificationWithDucking = useCallback(() => {
+    if (audioRef.current?.playNotification) {
+      setTimeout(() => audioRef.current?.playNotification?.(), 50)
+    }
+
+    setMediaVolume(DUCKED_MEDIA_VOLUME)
+
+    if (volumeRestoreTimerRef.current !== null) {
+      window.clearTimeout(volumeRestoreTimerRef.current)
+    }
+
+    volumeRestoreTimerRef.current = window.setTimeout(() => {
+      setMediaVolume(NORMAL_MEDIA_VOLUME)
+      volumeRestoreTimerRef.current = null
+    }, DUCK_DURATION_MS)
+  }, [setMediaVolume])
 
   // Fetch display settings
   const fetchSettings = useCallback(async () => {
@@ -213,9 +296,7 @@ export default function DisplayPage() {
             } else if (data.type === 'operation') {
               // Play sound and highlight the affected lane right away
               if (['CALL', 'BUZZ', 'NEXT', 'SERVE'].includes(data.action)) {
-                if (audioRef.current?.playNotification) {
-                  setTimeout(() => audioRef.current!.playNotification!(), 50)
-                }
+                playNotificationWithDucking()
                 setRecentlyUpdatedLanes((prev) => new Set([...prev, data.laneId.toString()]))
                 setTimeout(() => {
                   setRecentlyUpdatedLanes((prev) => {
@@ -261,7 +342,7 @@ export default function DisplayPage() {
     } else {
       return startFallbackPolling()
     }
-  }, [isPageVisible, connectionRetries, startFallbackPolling, fetchLaneStatus])
+  }, [isPageVisible, connectionRetries, startFallbackPolling, fetchLaneStatus, playNotificationWithDucking])
 
   // Highlight rows when number changes
   useEffect(() => {
@@ -272,9 +353,7 @@ export default function DisplayPage() {
         const prevLane = prev.find((p) => String(p.id) === String(lane.id))
         if (prevLane && prevLane.currentNumber !== lane.currentNumber && lane.currentNumber > 0) {
           updatedIds.add(String(lane.id))
-          if (audioRef.current?.playNotification) {
-            setTimeout(() => audioRef.current!.playNotification!(), 100)
-          }
+          playNotificationWithDucking()
         }
       })
       if (updatedIds.size > 0) {
@@ -283,7 +362,15 @@ export default function DisplayPage() {
       }
     }
     previousLanesRef.current = lanes
-  }, [lanes])
+  }, [lanes, playNotificationWithDucking])
+
+  useEffect(() => {
+    return () => {
+      if (volumeRestoreTimerRef.current !== null) {
+        window.clearTimeout(volumeRestoreTimerRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     fetchLaneStatus()
@@ -382,7 +469,12 @@ export default function DisplayPage() {
   // or the API becomes ready for the first time.
   useEffect(() => {
     if (settings.display_media_type !== 'video' || !ytApiReady || !currentMedia) return
-    const urlMatch = currentMedia.url.match(
+    const normalizedUrl = /^(https?:)?\/\//i.test(currentMedia.url) || /^(data:|blob:)/i.test(currentMedia.url)
+      ? currentMedia.url
+      : currentMedia.url.startsWith('/')
+        ? currentMedia.url
+        : `/${currentMedia.url}`
+    const urlMatch = normalizedUrl.match(
       /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/
     )
     const videoId = urlMatch ? urlMatch[1] : null
@@ -390,8 +482,6 @@ export default function DisplayPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const YT = (window as any).YT
     if (!YT?.Player) return
-
-    const muted = settings.display_video_muted !== 'false'
 
     // Destroy previous player and clear the container so YT gets a fresh element
     ytPlayerRef.current?.destroy()
@@ -406,14 +496,36 @@ export default function DisplayPage() {
       height: '100%',
       playerVars: {
         autoplay: 1,
-        mute: muted ? 1 : 0,
+        mute: 1,
         controls: 0,
         rel: 0,
         modestbranding: 1,
         playsinline: 1,
       },
       events: {
+        onReady() {
+          const player = ytPlayerRef.current
+          player?.mute()
+          setMediaVolume(mediaVolumeRef.current)
+          player?.playVideo?.()
+
+          const iframe = player?.getIframe?.()
+          if (iframe) {
+            iframe.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture')
+          }
+
+          // Reinforce autoplay start in case of an initial buffering/paused state.
+          setTimeout(() => player?.playVideo?.(), 300)
+        },
         onStateChange(e: { data: number }) {
+          // 1 = YT.PlayerState.PLAYING
+          if (e.data === 1) {
+            const player = ytPlayerRef.current
+            setTimeout(() => {
+              player?.unMute()
+              setMediaVolume(mediaVolumeRef.current)
+            }, 250)
+          }
           if (e.data === 0) handleMediaNextRef.current() // 0 = YT.PlayerState.ENDED
         },
       },
@@ -424,18 +536,7 @@ export default function DisplayPage() {
       ytPlayerRef.current = null
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.display_media_type, currentMedia?.url, ytApiReady, settings.display_video_muted])
-
-  // Sync mute changes to an already-running player without restarting it
-  useEffect(() => {
-    const p = ytPlayerRef.current
-    if (!p) return
-    if (settings.display_video_muted === 'false') {
-      p.unMute()
-    } else {
-      p.mute()
-    }
-  }, [settings.display_video_muted])
+  }, [settings.display_media_type, currentMedia?.url, ytApiReady, setMediaVolume])
 
   const {
     display_header_type: headerType,
@@ -451,13 +552,21 @@ export default function DisplayPage() {
   } = settings
 
   // Check whether the current item is a YouTube video
+  function normalizeMediaUrl(url: string): string {
+    if (!url) return ''
+    if (/^(https?:)?\/\//i.test(url) || /^(data:|blob:)/i.test(url)) return url
+    return url.startsWith('/') ? url : `/${url}`
+  }
+
+  const currentMediaUrl = normalizeMediaUrl(currentMedia?.url ?? '')
+
   function extractYouTubeId(url: string): string | null {
     const m = url.match(
       /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/
     )
     return m ? m[1] : null
   }
-  const isYouTubeVideo = mediaType === 'video' && !!extractYouTubeId(currentMedia?.url ?? '')
+  const isYouTubeVideo = mediaType === 'video' && !!extractYouTubeId(currentMediaUrl)
 
   // Auto-scale font based on row count
   const rowCount = Math.max(lanes.length, 1)
@@ -626,7 +735,7 @@ export default function DisplayPage() {
             {mediaType === 'image' ? (
               <img
                 key={mediaKey}
-                src={currentMedia?.url}
+                src={currentMediaUrl}
                 alt="Display media"
                 className="w-full h-full object-cover"
                 onError={handleMediaNext}
@@ -636,13 +745,39 @@ export default function DisplayPage() {
             ) : (
               <video
                 key={mediaKey}
-                src={currentMedia?.url}
-                autoPlay
-                muted={settings.display_video_muted !== 'false'}
+                ref={videoElementRef}
+                src={currentMediaUrl}
                 playsInline
+                preload="auto"
                 className="w-full h-full object-cover"
                 onEnded={handleMediaNext}
                 onError={handleMediaNext}
+                onCanPlay={(event) => {
+                  const v = event.currentTarget
+                  // Only attempt once per element instance (key resets this per playlist item).
+                  if (v.dataset.playAttempted) return
+                  v.dataset.playAttempted = 'true'
+                  v.volume = mediaVolumeRef.current
+                  // Chrome recommended pattern (https://developer.chrome.com/blog/autoplay/):
+                  // call play() explicitly and handle the rejection promise.
+                  // Chrome allows unmuted play if MEI score is sufficient (built up from
+                  // regular use) or if the user has interacted with the domain before.
+                  v.play()
+                    .then(() => {
+                      // Unmuted autoplay allowed — Chrome granted it via MEI or domain interaction.
+                      audioUnlockedRef.current = true
+                      setAudioUnlocked(true)
+                      localStorage.setItem('display_audio_unlocked', 'true')
+                    })
+                    .catch(() => {
+                      // Chrome blocked unmuted autoplay — fall back to muted and show overlay.
+                      audioUnlockedRef.current = false
+                      setAudioUnlocked(false)
+                      localStorage.removeItem('display_audio_unlocked')
+                      v.muted = true
+                      v.play().catch(() => {})
+                    })
+                }}
               />
             )}
           </div>
@@ -692,6 +827,21 @@ export default function DisplayPage() {
         <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
         {isConnected ? 'Live' : 'Reconnecting...'}
       </div>
+
+      {/* Audio unlock overlay — only shown when Chrome blocks unmuted autoplay.
+           Solved permanently by launching Chrome with --autoplay-policy=no-user-gesture-required */}
+      {audioUnlocked === false && (
+        <div
+          className="fixed inset-0 z-50 cursor-pointer"
+          onClick={unlockAudio}
+          aria-label="Click to enable audio"
+        >
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/70 text-white text-sm px-4 py-2 rounded-full select-none">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+            <span>Click anywhere to enable audio</span>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
