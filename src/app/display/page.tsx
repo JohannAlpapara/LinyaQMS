@@ -108,6 +108,7 @@ export default function DisplayPage() {
   const ytPlayerRef = useRef<YtPlayerController | null>(null)
   const ytContainerRef = useRef<HTMLDivElement>(null)
   const videoElementRef = useRef<HTMLVideoElement | null>(null)
+  const videoAdvanceTimerRef = useRef<number | null>(null)
   const volumeRestoreTimerRef = useRef<number | null>(null)
   const mediaVolumeRef = useRef(NORMAL_MEDIA_VOLUME)
   const handleMediaNextRef = useRef<() => void>(() => {})
@@ -390,6 +391,9 @@ export default function DisplayPage() {
 
   useEffect(() => {
     return () => {
+      if (videoAdvanceTimerRef.current !== null) {
+        window.clearTimeout(videoAdvanceTimerRef.current)
+      }
       if (volumeRestoreTimerRef.current !== null) {
         window.clearTimeout(volumeRestoreTimerRef.current)
       }
@@ -470,6 +474,14 @@ export default function DisplayPage() {
   // Derive current media item (must be above YouTube effects that reference it)
   const effectiveIndex = mediaItems.length > 0 ? currentMediaIndex : 0
   const currentMedia = mediaItems[effectiveIndex] ?? null
+
+  // Clear any pending video-advance timer when media selection changes.
+  useEffect(() => {
+    if (videoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(videoAdvanceTimerRef.current)
+      videoAdvanceTimerRef.current = null
+    }
+  }, [currentMedia?.url, settings.display_media_type])
 
   // ── YouTube IFrame Player API ──────────────────────────────
   // Load the YouTube IFrame API script once when video mode is active.
@@ -778,9 +790,64 @@ export default function DisplayPage() {
                 src={currentMediaUrl}
                 playsInline
                 preload="auto"
+                loop={false}
                 className="w-full h-full object-cover"
-                onEnded={handleMediaNext}
-                onError={handleMediaNext}
+                onLoadedMetadata={(event) => {
+                  const v = event.currentTarget
+                  v.dataset.didAdvance = '0'
+
+                  const durationMs = Math.round(v.duration * 1000)
+                  const fallbackSeconds = Math.max((currentMedia?.duration ?? 0), 1)
+                  const fallbackMs = fallbackSeconds * 1000
+                  const timerMs = Number.isFinite(durationMs) && durationMs > 0
+                    ? durationMs + 1200
+                    : fallbackMs
+
+                  if (videoAdvanceTimerRef.current !== null) {
+                    window.clearTimeout(videoAdvanceTimerRef.current)
+                  }
+
+                  // Fallback: some files/decoders can miss onEnded; advance after duration.
+                  videoAdvanceTimerRef.current = window.setTimeout(() => {
+                    v.dataset.didAdvance = '1'
+                    handleMediaNextRef.current()
+                    videoAdvanceTimerRef.current = null
+                  }, timerMs)
+                }}
+                onTimeUpdate={(event) => {
+                  const v = event.currentTarget
+                  if (v.dataset.didAdvance === '1') return
+                  const d = v.duration
+                  if (!Number.isFinite(d) || d <= 0) return
+
+                  // Some browsers/codecs can miss onEnded; catch near-end and advance once.
+                  if (v.currentTime >= Math.max(d - 0.25, 0)) {
+                    v.dataset.didAdvance = '1'
+                    if (videoAdvanceTimerRef.current !== null) {
+                      window.clearTimeout(videoAdvanceTimerRef.current)
+                      videoAdvanceTimerRef.current = null
+                    }
+                    handleMediaNextRef.current()
+                  }
+                }}
+                onEnded={() => {
+                  const v = videoElementRef.current
+                  if (v) v.dataset.didAdvance = '1'
+                  if (videoAdvanceTimerRef.current !== null) {
+                    window.clearTimeout(videoAdvanceTimerRef.current)
+                    videoAdvanceTimerRef.current = null
+                  }
+                  handleMediaNext()
+                }}
+                onError={() => {
+                  const v = videoElementRef.current
+                  if (v) v.dataset.didAdvance = '1'
+                  if (videoAdvanceTimerRef.current !== null) {
+                    window.clearTimeout(videoAdvanceTimerRef.current)
+                    videoAdvanceTimerRef.current = null
+                  }
+                  handleMediaNext()
+                }}
                 onCanPlay={(event) => {
                   const v = event.currentTarget
                   // Only attempt once per element instance (key resets this per playlist item).

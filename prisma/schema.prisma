@@ -123,6 +123,6 @@ model QueueOperation {
 
 model Setting {
   key   String @id
-  value String
+  value String @db.LongText
   @@map("settings")
 }

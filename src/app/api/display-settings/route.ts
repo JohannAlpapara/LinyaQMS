@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getCurrentUser } from '@/lib/auth'
 
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 const SETTING_KEYS = [
   'display_header_type',
   'display_header_text',
@@ -57,7 +60,13 @@ export async function GET() {
       result[s.key] = s.value
     })
 
-    return NextResponse.json(result)
+    return NextResponse.json(result, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        Pragma: 'no-cache',
+        Expires: '0',
+      },
+    })
   } catch (error) {
     console.error('Error fetching display settings:', error)
     return NextResponse.json({ error: 'Failed to fetch settings' }, { status: 500 })

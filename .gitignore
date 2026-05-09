@@ -57,3 +57,7 @@ ESDPRT001
 EPSON*
 test-print*.ps1
 *.prn
+
+# Uploaded media (keep directory, ignore contents)
+public/uploads/*
+!public/uploads/.gitkeep
