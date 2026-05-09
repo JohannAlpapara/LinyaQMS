@@ -1,5 +1,6 @@
 import { promisify } from 'util'
 import { exec as execCallback } from 'child_process'
+import { buildCompactTicketEscPos, buildCompactTicketText, type CompactTicketOptions } from './ticketTemplate'
 
 const execAsync = promisify(execCallback)
 
@@ -284,4 +285,70 @@ export async function printTicketText(content: string): Promise<{ success: boole
       // temp file cleanup is best-effort
     }
   }
+}
+
+export async function printTicketBuffer(content: Buffer): Promise<{ success: boolean; details: string }> {
+  const fs = await import('fs')
+  const os = await import('os')
+  const path = await import('path')
+
+  const status = await getPrinterStatus()
+  if (!status.connected) {
+    return { success: false, details: status.details || 'No printer is ready on the host machine' }
+  }
+
+  const filePath = path.join(os.tmpdir(), `linya-ticket-${Date.now()}.bin`)
+  fs.writeFileSync(filePath, content)
+
+  try {
+    if (process.platform === 'darwin' || process.platform === 'linux') {
+      const printer = status.readyPrinters[0] || status.defaultPrinter || status.printers[0]
+      const lpAvailable = await hasCommand('lp')
+      const lprAvailable = await hasCommand('lpr')
+
+      if (!lpAvailable && !lprAvailable) {
+        return { success: false, details: 'No print command available (lp/lpr)' }
+      }
+
+      const quotedFile = shellQuote(filePath)
+      const quotedPrinter = printer ? shellQuote(printer) : ''
+      const attempts: string[] = []
+
+      if (lpAvailable) {
+        attempts.push(`lp -o raw ${quotedFile}`)
+        if (printer) attempts.push(`lp -o raw -d ${quotedPrinter} ${quotedFile}`)
+      }
+      if (lprAvailable) {
+        attempts.push(`lpr -l ${quotedFile}`)
+        if (printer) attempts.push(`lpr -l -P ${quotedPrinter} ${quotedFile}`)
+      }
+
+      let lastError = 'POSIX raw print command failed'
+      for (const command of attempts) {
+        const printed = await run(command)
+        if (printed.ok) {
+          return { success: true, details: `Sent to printer: ${printer}` }
+        }
+        lastError = printed.stderr || lastError
+      }
+
+      return { success: false, details: lastError }
+    }
+
+    return printTicketText(content.toString('utf8'))
+  } finally {
+    try {
+      fs.unlinkSync(filePath)
+    } catch {
+      // temp file cleanup is best-effort
+    }
+  }
+}
+
+export async function printCompactTicket(options: CompactTicketOptions): Promise<{ success: boolean; details: string }> {
+  if (process.platform === 'linux' || process.platform === 'darwin') {
+    return printTicketBuffer(buildCompactTicketEscPos(options))
+  }
+
+  return printTicketText(buildCompactTicketText(options))
 }

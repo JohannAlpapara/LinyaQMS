@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { printTicketText } from '@/lib/printers'
+import { printCompactTicket } from '@/lib/printers'
 
 interface PrintTicketRequest {
   queueNumber: string | number
@@ -20,23 +20,11 @@ export async function POST(request: NextRequest) {
       hour12: true,
     })
 
-    const ticketContent = [
-      'Queue Ticket',
-      'Please keep this ticket until your number is called',
-      '===============================',
-      formattedDate,
-      '',
-      `Number: ${queueNumber}`,
-      `Service: ${laneName}`,
-      `Now Serving: ${currentNumber}`,
-      '===============================',
-      'Please listen to your number or watch the display screen',
-      'If you miss your call, please approach the service counter',
-      '',
-      '',
-    ].join('\n')
-
-    const result = await printTicketText(ticketContent)
+    const result = await printCompactTicket({
+      queueNumber: String(queueNumber),
+      laneName,
+      timestamp: formattedDate,
+    })
     if (!result.success) {
       return NextResponse.json(
         {

@@ -57,14 +57,6 @@ interface LaneStatus {
   laneCount: number
 }
 
-interface QueueTicket {
-  queueNumber: string
-  laneName: string
-  currentNumber: number
-  waitingCount: number
-  estimatedWait: number
-}
-
 export default function ReservationPage() {
   const [lanes, setLanes] = useState<LaneStatus[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -203,57 +195,6 @@ export default function ReservationPage() {
     }
   }
 
-  const printTicket = async (ticketData: QueueTicket) => {
-    try {
-      const currentTime = new Date()
-      const timestamp = currentTime.toLocaleString('en-US', {
-        month: '2-digit',
-        day: '2-digit',
-        year: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true,
-      })
-      const response = await fetch('/api/print/ticket', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          queueNumber: ticketData.queueNumber,
-          laneName: ticketData.laneName,
-          currentNumber: ticketData.currentNumber,
-          timestamp,
-        }),
-      })
-      if (response.ok) {
-        const data = await response.json()
-        if (data.success) {
-          const details = data.details ? ` (${data.details})` : ''
-          toast.success(`Physical ticket printed successfully!${details}`)
-        } else {
-          const details = data.details || data.error || 'Unknown print service response'
-          console.error('printTicket returned success HTTP but data.success is false', { data })
-          toast.error(`Printing failed: ${details}`)
-        }
-      } else {
-        let errorData: { error?: string; details?: string } = {}
-        try {
-          errorData = await response.json()
-        } catch (jsonError) {
-          console.warn('printTicket: response JSON parse failed', jsonError)
-        }
-        const errorDetails = errorData.details || errorData.error || `HTTP ${response.status}`
-        console.error('printTicket failed', { status: response.status, errorDetails })
-        if (response.status === 503) {
-          toast.error(`No printer available. ${errorDetails}`)
-        } else {
-          toast.error(`Printing failed: ${errorDetails}`)
-        }
-      }
-    } catch {
-      toast.error('Failed to print ticket. Please check printer connection.')
-    }
-  }
-
   const getQueueNumber = async (lane: LaneStatus) => {
     if (gettingNumberFor) return
     if (!isPrinterConnected) {
@@ -274,13 +215,13 @@ export default function ReservationPage() {
         const formattedNumber: string = data.prefix
           ? data.prefix + data.queueNumber.toString().padStart(3, '0')
           : data.queueNumber.toString().padStart(4, '0')
-        await printTicket({
-          queueNumber: formattedNumber,
-          laneName: data.laneName,
-          currentNumber: data.currentNumber,
-          waitingCount: data.waitingCount,
-          estimatedWait: data.estimatedWait,
-        })
+        if (data.ticketPrinted) {
+          const details = data.printDetails ? ` (${data.printDetails})` : ''
+          toast.success(`Physical ticket printed successfully!${details}`)
+        } else {
+          const details = data.printDetails || 'Printer is unavailable'
+          toast.error(`Printing failed: ${details}`)
+        }
         toast.success(`Queue number ${formattedNumber} assigned for ${data.laneName}!`)
         fetchLaneStatus()
       } else {

@@ -4,6 +4,7 @@ import { resetLaneNumbersOncePerDay } from '@/lib/laneReset'
 
 import { QueueItemStatus } from '@prisma/client'
 import { broadcastAllLaneData } from '@/lib/broadcast'
+import { printCompactTicket } from '@/lib/printers'
 
 export async function POST(request: NextRequest) {
   try {
@@ -135,7 +136,34 @@ export async function POST(request: NextRequest) {
       waitingCount: waitingCount,
       estimatedWait: waitingCount * 5 // Assume 5 minutes per person
     };
-    return NextResponse.json(responseObj, { status: 201 })
+
+    // Print ticket on the server so every customer queue selection triggers a print attempt.
+    const formattedDate = new Date().toLocaleString('en-US', {
+      month: 'numeric',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+    const formattedQueueNumber = responseObj.prefix
+      ? responseObj.prefix + responseObj.queueNumber.toString().padStart(3, '0')
+      : responseObj.queueNumber.toString().padStart(4, '0')
+
+    const printResult = await printCompactTicket({
+      queueNumber: formattedQueueNumber,
+      laneName: responseObj.laneName,
+      timestamp: formattedDate,
+    })
+
+    return NextResponse.json(
+      {
+        ...responseObj,
+        ticketPrinted: printResult.success,
+        printDetails: printResult.details,
+      },
+      { status: 201 }
+    )
   } catch (error) {
     console.error('Get queue number error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
