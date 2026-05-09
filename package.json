@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
+    "dev:stable": "WATCHPACK_POLLING=true next dev --hostname 0.0.0.0 --webpack",
     "build": "next build",
     "build:production": "node build-production.js",
     "start": "next start --hostname 0.0.0.0",
