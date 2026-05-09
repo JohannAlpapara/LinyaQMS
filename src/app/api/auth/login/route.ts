@@ -60,10 +60,13 @@ export async function POST(request: NextRequest) {
       token
     })
 
+    const forwardedProto = request.headers.get('x-forwarded-proto')
+    const isHttps = request.nextUrl.protocol === 'https:' || forwardedProto === 'https'
+
     // Set cookie
     response.cookies.set('auth-token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: isHttps,
       sameSite: 'strict',
       maxAge: 86400 // 24 hours
     })

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getCurrentUser, hasRole } from '@/lib/auth'
-import { UserRole } from '@prisma/client'
+import { QueueItemStatus, UserRole } from '@prisma/client'
 
 export async function GET(request: NextRequest) {
   try {
@@ -45,7 +45,10 @@ export async function GET(request: NextRequest) {
 
     // Transform the data to match the Lane interface, using authoritative lane counters
     const lanes = await Promise.all(assignedLanes.map(async (assignment) => {
-      let queueItems = assignment.lane.queueItems
+      let queueItems: Array<{ number: number; status: QueueItemStatus }> = assignment.lane.queueItems.map((item) => ({
+        number: item.number,
+        status: item.status,
+      }))
 
       // For lanes in a serviceGroup, WAITING tickets live on the primary lane (lowest ID).
       // Show the primary pool's waiting items so every cashier in the group
@@ -62,7 +65,9 @@ export async function GET(request: NextRequest) {
             orderBy: { number: 'asc' },
           })
           // Keep this lane's own CALLED/SERVED items; replace WAITING with primary pool
-          const ownNonWaiting = assignment.lane.queueItems.filter((i) => i.status !== 'WAITING')
+          const ownNonWaiting = assignment.lane.queueItems
+            .filter((i) => i.status !== 'WAITING')
+            .map((i) => ({ number: i.number, status: i.status }))
           queueItems = [
             ...primaryWaiting.map((i) => ({ number: i.number, status: i.status })),
             ...ownNonWaiting,
@@ -78,7 +83,7 @@ export async function GET(request: NextRequest) {
         prefix: assignment.lane.prefix,
         currentNumber: assignment.lane.currentNumber,
         lastServedNumber: assignment.lane.lastServedNumber,
-        queueItems: queueItems.map((item: { number: number; status: string }) => ({
+        queueItems: queueItems.map((item) => ({
           number: item.number,
           status: item.status
         }))
