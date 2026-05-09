@@ -591,20 +591,25 @@ export default function DisplayPage() {
     return m ? m[1] : null
   }
   const isYouTubeVideo = mediaType === 'video' && !!extractYouTubeId(currentMediaUrl)
+  const hasMediaPanel = mediaType !== 'none' && mediaItems.length > 0
 
   // Auto-scale font based on row count
   const rowCount = Math.max(lanes.length, 1)
-  const counterFontSize = `clamp(0.875rem, ${Math.min(6, 36 / rowCount)}vh, 3.5rem)`
-  const numberFontSize = `clamp(1rem, ${Math.min(7.5, 44 / rowCount)}vh, 5rem)`
-  const headerFontSize = `clamp(0.5rem, ${Math.min(2.5, 14 / rowCount)}vh, 1.5rem)`
+  const noMediaBoost = hasMediaPanel ? 1 : 1.28
+  const baseCounterVh = Math.min(6, 36 / rowCount) * noMediaBoost
+  const baseNumberVh = Math.min(7.5, 44 / rowCount) * noMediaBoost
+  const baseHeaderVh = Math.min(2.5, 14 / rowCount) * noMediaBoost
+  const counterFontSize = `clamp(${(0.875 * noMediaBoost).toFixed(3)}rem, ${baseCounterVh.toFixed(2)}vh, ${(3.5 * noMediaBoost).toFixed(2)}rem)`
+  const numberFontSize = `clamp(${(1 * noMediaBoost).toFixed(3)}rem, ${baseNumberVh.toFixed(2)}vh, ${(5 * noMediaBoost).toFixed(2)}rem)`
+  const headerFontSize = `clamp(${(0.5 * noMediaBoost).toFixed(3)}rem, ${baseHeaderVh.toFixed(2)}vh, ${(1.5 * noMediaBoost).toFixed(2)}rem)`
 
   // Service label font: same size as counter but shrinks proportionally for long names
   const getServiceFontSize = (name: string): string => {
-    const baseVh = Math.min(6, 36 / rowCount)
+    const baseVh = baseCounterVh
     const maxChars = 9 // chars that fit comfortably at full size
     const scale = name.length > maxChars ? maxChars / name.length : 1
-    const minRem = Math.max(0.5, 0.875 * scale)
-    return `clamp(${minRem.toFixed(3)}rem, ${(baseVh * scale).toFixed(2)}vh, ${(3.5 * scale).toFixed(2)}rem)`
+    const minRem = Math.max(0.5, 0.875 * noMediaBoost * scale)
+    return `clamp(${minRem.toFixed(3)}rem, ${(baseVh * scale).toFixed(2)}vh, ${(3.5 * noMediaBoost * scale).toFixed(2)}rem)`
   }
 
   if (isLoading) {
@@ -664,7 +669,7 @@ export default function DisplayPage() {
         <div
           className="flex flex-col overflow-hidden"
           style={{
-            width: mediaType !== 'none' && mediaItems.length > 0 ? '43%' : '100%',
+            width: hasMediaPanel ? '43%' : '100%',
             backgroundColor: primaryColor,
           }}
         >
@@ -754,7 +759,7 @@ export default function DisplayPage() {
         </div>
 
         {/* Right: Media Playlist */}
-        {mediaType !== 'none' && mediaItems.length > 0 && (
+        {hasMediaPanel && (
           <div className="flex-1 bg-black overflow-hidden">
             {mediaType === 'image' ? (
               <img
@@ -807,7 +812,7 @@ export default function DisplayPage() {
             )}
           </div>
         )}
-        {mediaType !== 'none' && mediaItems.length === 0 && (
+        {mediaType !== 'none' && !hasMediaPanel && (
           <div className="flex-1 bg-black" />
         )}
       </main>
